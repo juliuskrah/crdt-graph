@@ -8,6 +8,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.juliuskrah.crdt.LwwElementGraph.LWWBias;
 import java.util.List;
+import java.util.Set;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -148,12 +150,47 @@ class LwwElementGraphTest {
     @Test
     @DisplayName("find any path between two vertices")
     void findPathBetweenVertices() {
+        // -- find any path between two vertices
+        final var elementGraph = new LwwElementGraph<String>("node 1");
+        elementGraph.addVertex("julius");
+        elementGraph.addVertex("james");
+        elementGraph.addVertex("zumar");
+        elementGraph.addVertex("alice");
+        elementGraph.addVertex("freda");
 
+        var juliusAliceEdge = Edge.of(
+            Vertex.of("julius", elementGraph.findVectorClock("julius")),
+            Vertex.of("alice", elementGraph.findVectorClock("alice"))
+        );
+        var aliceFredaEdge = Edge.of(
+            Vertex.of("alice", elementGraph.findVectorClock("alice")),
+            Vertex.of("freda", elementGraph.findVectorClock("freda"))
+        );
+        elementGraph.addEdge(juliusAliceEdge);
+        elementGraph.addEdge(aliceFredaEdge);
+
+        var path = elementGraph.findAnyPath("julius", "freda");
+        assertTrue(Set.of("julius", "alice", "freda").containsAll(path));
     }
 
     @Test
     @DisplayName("merge with concurrent changes from other graph/replica")
     void testMergeTwoReplicas() {
+        // -- merge changes from another replica
+        var elementGraph1 = new LwwElementGraph<String>("node1");
+        var elementGraph2 = new LwwElementGraph<String>("node2");
 
+        // add Julius and James to node1
+        elementGraph1.addVertex("julius");
+        elementGraph1.addVertex("james");
+        // add Zumar and Alice to node2, remove Julius from node2
+        elementGraph2.addVertex("zumar");
+        elementGraph2.removeVertex("julius");
+        elementGraph2.addVertex("alice");
+        assertEquals(2, elementGraph1.vertexSize());
+        assertEquals(2, elementGraph2.vertexSize());
+
+        elementGraph1.merge(elementGraph2);
+        assertEquals(3, elementGraph1.vertexSize());
     }
 }

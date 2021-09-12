@@ -1,11 +1,17 @@
 package com.juliuskrah.crdt;
 
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.Deque;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.stream.Stream;
+
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -26,14 +32,15 @@ public class LwwElementGraph<E extends Comparable<E>> {
     }
 
     /**
+     * LinkedHashMap keeps the order of insertion. This compliments the VectorClock.
      * @param nodeId the node Id
      * @param bias the bias to apply
      */
     public LwwElementGraph(String nodeId, LWWBias bias) {
         Objects.requireNonNull(nodeId, "nodeId must not be null");
-        this.elements = new HashMap<>();
-        this.addGraph = new HashMap<>();
-        this.removeGraph = new HashMap<>();
+        this.elements = new LinkedHashMap<>();
+        this.addGraph = new LinkedHashMap<>();
+        this.removeGraph = new LinkedHashMap<>();
         this.vectorClock = VectorClock.of(nodeId);
         this.bias = bias;
     }
@@ -84,6 +91,7 @@ public class LwwElementGraph<E extends Comparable<E>> {
     private void doRemoveVertex(E element) {
         log.info("Removing: {}...", element);
         var vertex = Vertex.of(element, this.vectorClock);
+        keys(addGraph, element).findFirst().ifPresent(addGraph::remove);
         removeGraph.computeIfAbsent(vertex, v -> new ArrayList<>());
         updateElements(element, this.vectorClock);
     }
@@ -128,6 +136,10 @@ public class LwwElementGraph<E extends Comparable<E>> {
         return map.entrySet().stream().filter(entry -> value.equals(entry.getKey().getValue())).map(Map.Entry::getKey);
     }
 
+    private int getIndex(E element) {
+        return new ArrayList<E>(elements.keySet()).indexOf(element);
+    }
+
     /**
      * Updates the set by checking the elements in addSet against the elements in the removeSet.
      * Keeps any elements that appear in both add and remove sets
@@ -143,7 +155,7 @@ public class LwwElementGraph<E extends Comparable<E>> {
         if (removeTime != null && addTime != null) {
             if (removeTime.compareTo(addTime) < 0 //
                     || (removeTime.compareTo(addTime) == 0 && bias == LWWBias.ADD)) {
-                elements.put(element, clock);
+                elements.put(element, addTime.merge(removeTime));
             } else {
                 elements.remove(element);
             }
@@ -154,18 +166,40 @@ public class LwwElementGraph<E extends Comparable<E>> {
         }
     }
 
+    /**
+     * Add vertex to the graph.
+     * We take the current vector clock and increment it. Operations to add to this graph uses constant time
+     * @param element
+     */
     public void addVertex(E element) {
         prepareAddVertex(element);
     }
 
+    /**
+     * Remove vertex from the graph.
+     * We take the current vector clock and increment it. Operations to remove from this graph uses contant time
+     * @param element
+     */
     public void removeVertex(E element) {
         prepareRemoveVertex(element);
     }
 
+    /**
+     * Add an edge to the graph.
+     * If the vertices exist on this graph, the the call to add edge succeed
+     * @param edge
+     * @return
+     */
     public boolean addEdge(Edge<E> edge) {
         return prepareAddEdge(edge);
     }
 
+    /**
+     * Remove an edge from the graph.
+     * We start by finding all ajacent vertices to each of the vertices
+     * of this edge and remove them
+     * @param edge
+     */
     public void removeEdge(Edge<E> edge) {
         prepareRemoveEdge(edge);
     }
@@ -184,11 +218,59 @@ public class LwwElementGraph<E extends Comparable<E>> {
     }
 
     /**
+     * Search any path between source and destination.
+     * @param source
+     * @param destination
+     * @return first path found
+     */
+    public Set<E> findAnyPath(E source, E destination) {
+        boolean[] visited = new boolean[elements.size()];
+        Set<E> paths = new LinkedHashSet<>(); // insertion order is maintained
+        paths.add(source);
+
+        // Create a queue for BFS
+        Deque<E> queue = new LinkedList<>();
+
+        // Mark the current node as visited and enqueue it
+        visited[getIndex(source)] = true;
+        queue.add(source);
+
+        // 'i' will be used to get all adjacent vertices of a vertex
+        Iterator<E> iterator;
+        while (!queue.isEmpty()) {
+            source = queue.poll();
+            E currentNode = null;
+            iterator = findAdjacentVertices(source).stream().map(Vertex::getValue).iterator();
+            while (iterator.hasNext()) {
+                currentNode = iterator.next();
+                if (currentNode == destination) {
+                    paths.add(destination);
+                    return paths;
+                }
+                if (!visited[getIndex(currentNode)]) {
+                    visited[getIndex(currentNode)] = true;
+                    queue.add(currentNode);
+                }
+            }
+            paths.add(currentNode);
+        }
+        return paths;
+    }
+
+    /**
      * @param other the LWW graph to merge with
      * @return merged graph
      */
     public LwwElementGraph<E> merge(LwwElementGraph<E> other) {
-        return null;
+        this.addGraph.putAll(other.addGraph);
+        this.removeGraph.putAll(other.removeGraph);
+        this.addGraph.forEach((vertex, adjacentVertices) -> 
+            updateElements(vertex.getValue(), vertex.getVectorClock())
+        );
+        this.removeGraph.forEach((vertex, adjacentVertices) -> 
+            updateElements(vertex.getValue(), vertex.getVectorClock())
+        );
+        return this;
     }
 
     public VectorClock findVectorClock(E element) {
@@ -199,6 +281,11 @@ public class LwwElementGraph<E extends Comparable<E>> {
         return this.elements.size();
     }
 
+    /**
+     * Checks whether the current graph contains this vertex.
+     * @param element
+     * @return
+     */
     public boolean containsVertex(E element) {
         var vertex = keys(addGraph, element).findFirst().or(() -> keys(removeGraph, element).findFirst()).orElse(null);
         return vertex != null;

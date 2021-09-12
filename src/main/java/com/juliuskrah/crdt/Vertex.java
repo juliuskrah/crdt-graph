@@ -10,8 +10,6 @@ public final class Vertex<E extends Comparable<E>> {
     private final E value;
     private final VectorClock vectorClock;
 
-    private boolean removed;
-
     private Vertex(E value, VectorClock clock) {
         this.value = value;
         this.vectorClock = clock;
@@ -27,14 +25,6 @@ public final class Vertex<E extends Comparable<E>> {
 
     public VectorClock getVectorClock() {
         return this.vectorClock;
-    }
-
-    public void setRemoved(boolean removed) {
-        this.removed = removed;
-    }
-
-    public boolean isRemoved() {
-        return this.removed;
     }
 
     /**
